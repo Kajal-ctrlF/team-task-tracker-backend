@@ -1,4 +1,8 @@
-const nodemailer = require("nodemailer");
+const SibApiV3Sdk = require("sib-api-v3-sdk");
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BREVO API — HTTP based email (works on Render free tier)
+// ─────────────────────────────────────────────────────────────────────────────
 
 const APP_CONFIG = {
   name:             "Team Task Tracker",
@@ -6,16 +10,6 @@ const APP_CONFIG = {
   year:             new Date().getFullYear(),
   primaryColor:     "#4f46e5",
   primaryColorDark: "#4338ca",
-};
-
-const createTransporter = () => {
-  return nodemailer.createTransport({
-    service: "gmail",
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS,
-    },
-  });
 };
 
 const getOtpEmailTemplate = (name, otp) => `
@@ -91,7 +85,7 @@ const getOtpEmailTemplate = (name, otp) => `
 
           <tr>
             <td style="background:#f8fafc;padding:20px 40px 28px;text-align:center;">
-              <p style="margin:0 0 6px;color:#94a3b8;font-size:12px;line-height:1.6;">
+              <p style="margin:0 0 6px;color:#94a3b8;font-size:12px;">
                 This is an automated message. Please do not reply to this email.
               </p>
               <p style="margin:0;color:#cbd5e1;font-size:11px;">
@@ -114,14 +108,23 @@ const getOtpEmailTemplate = (name, otp) => `
 `;
 
 const sendOtpEmail = async (toEmail, name, otp) => {
-  const transporter = createTransporter();
-  await transporter.sendMail({
-    from:    `"${APP_CONFIG.senderLabel}" <${process.env.EMAIL_USER}>`,
-    to:      toEmail,
-    subject: `${otp} is your ${APP_CONFIG.name} verification code`,
-    html:    getOtpEmailTemplate(name, otp),
-    text:    `Hi ${name},\n\nYour OTP is: ${otp}\n\nExpires in 10 minutes.\n\n— ${APP_CONFIG.name} Team`,
-  });
+  const defaultClient = SibApiV3Sdk.ApiClient.instance;
+  const apiKey        = defaultClient.authentications["api-key"];
+  apiKey.apiKey       = process.env.BREVO_API_KEY;
+
+  const apiInstance   = new SibApiV3Sdk.TransactionalEmailsApi();
+  const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
+
+  sendSmtpEmail.subject     = `${otp} is your ${APP_CONFIG.name} verification code`;
+  sendSmtpEmail.htmlContent = getOtpEmailTemplate(name, otp);
+  sendSmtpEmail.sender      = {
+    name:  APP_CONFIG.senderLabel,
+    email: process.env.EMAIL_FROM,
+  };
+  sendSmtpEmail.to          = [{ email: toEmail, name }];
+  sendSmtpEmail.textContent = `Hi ${name},\n\nYour OTP is: ${otp}\n\nExpires in 10 minutes.\n\n— ${APP_CONFIG.name} Team`;
+
+  await apiInstance.sendTransacEmail(sendSmtpEmail);
 };
 
 module.exports = { sendOtpEmail };
