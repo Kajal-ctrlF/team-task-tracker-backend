@@ -183,36 +183,50 @@ const getTasks = async (req, res) => {
       limit = 10,
     } = req.query;
 
-    // Build filter dynamically — only add conditions that were provided
-    const filter = {};
+    // ── USER SCOPING — CRITICAL ───────────────────────────────────────────
+    // Every query MUST be scoped to the logged-in user.
+    // A user can only see tasks where:
+    //   - They created the task (createdBy === req.user._id)
+    //   - OR they are assigned to the task (assignedTo === req.user._id)
+    //
+    // Without this, any logged-in user could see ALL tasks in the database.
+    // req.user._id is set by the protect middleware from the JWT token.
+    // ─────────────────────────────────────────────────────────────────────
+    const userScopeFilter = {
+      $or: [
+        { createdBy: req.user._id },
+        { assignedTo: req.user._id },
+      ],
+    };
 
-    if (projectId) filter.project = projectId;
-    if (status)    filter.status = status;
-    if (priority)  filter.priority = priority;
-    if (assignedTo) filter.assignedTo = assignedTo;
+    // Build additional filters from query params
+    const additionalFilter = {};
+    if (projectId) additionalFilter.project  = projectId;
+    if (status)    additionalFilter.status   = status;
+    if (priority)  additionalFilter.priority = priority;
 
-    // Full-text search using MongoDB's $text operator
-    // Requires the text index defined in the Task model
-    // Searches across both title and description fields simultaneously
+    // Combine user scope + additional filters using $and
+    // This ensures user scope is ALWAYS applied, regardless of other filters
+    const filter = {
+      $and: [
+        userScopeFilter,
+        additionalFilter,
+      ],
+    };
+
+    // Full-text search
     if (search) {
       filter.$text = { $search: search };
     }
 
-    // Pagination math:
-    //   page=1, limit=10 → skip=0  (show items 1-10)
-    //   page=2, limit=10 → skip=10 (show items 11-20)
-    //   page=3, limit=10 → skip=20 (show items 21-30)
-    const pageNum  = Math.max(1, parseInt(page));   // minimum page is 1
-    const limitNum = Math.min(50, parseInt(limit));  // maximum 50 per page
+    const pageNum  = Math.max(1, parseInt(page));
+    const limitNum = Math.min(50, parseInt(limit));
     const skip     = (pageNum - 1) * limitNum;
 
-    // Run both queries at the same time using Promise.all
-    // This is faster than running them one after the other
-    // tasks = the actual results, total = count for pagination math
     const [tasks, total] = await Promise.all([
       populateTask(
         Task.find(filter)
-          .sort({ createdAt: -1 }) // newest first
+          .sort({ createdAt: -1 })
           .skip(skip)
           .limit(limitNum)
       ),
@@ -221,10 +235,10 @@ const getTasks = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      count: tasks.length,          // tasks on THIS page
-      total,                        // total matching tasks across ALL pages
+      count: tasks.length,
+      total,
       page: pageNum,
-      pages: Math.ceil(total / limitNum), // total number of pages
+      pages: Math.ceil(total / limitNum),
       data: tasks,
     });
   } catch (error) {
